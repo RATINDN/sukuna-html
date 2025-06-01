@@ -503,32 +503,6 @@ function hideLoader() {
   }
 }
 
-// Replace your existing load event listener with this:
-window.addEventListener("load", function() {
-  // Set a maximum timeout for the loader
-  const loaderTimeout = setTimeout(() => {
-    hideLoader();
-  }, 5000); // Force hide after 5 seconds if stuck
-
-  // Try to hide loader normally
-  hideLoader();
-  
-  // Clear timeout if loader hides normally
-  clearTimeout(loaderTimeout);
-});
-
-// Add error handling for resources
-window.addEventListener('error', function(e) {
-  if (e.target.tagName === 'IMG' || e.target.tagName === 'SCRIPT' || e.target.tagName === 'LINK') {
-    // If a resource fails to load, still hide the loader
-    hideLoader();
-  }
-}, true);
-
-// Add backup hiding mechanism
-document.addEventListener('DOMContentLoaded', function() {
-  setTimeout(hideLoader, 3000); // Backup timeout after DOM loads
-});
 
 
 
