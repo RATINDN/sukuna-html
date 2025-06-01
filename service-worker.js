@@ -201,7 +201,7 @@ self.addEventListener('fetch', (event) => {
           })
           .catch(() => {
             // For images, return a placeholder if available
-            if (event.request.url.match(/\.(jpg|jpeg|png|gif|webp|avif|svg)$/)) {
+            if (event.request.url.match(/\.(jpg|jpeg|png|gif|webp|svg)$/)) {
               return caches.match('/images/placeholder.svg');
             }
             
