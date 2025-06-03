@@ -1,4 +1,4 @@
-const CACHE_NAME = 'sukuna-pwa-v2';
+const CACHE_NAME = 'sukuna-pwa-v3';
 const OFFLINE_URL = '/offline.html';
 
 // Resources to cache immediately on install
@@ -12,7 +12,8 @@ const CORE_ASSETS = [
   '/css/signup.css',
   '/js/cloudflare-jsd.js',
   '/images/icon-192x192.png',
-  '/images/icon-512x512.png'
+  '/images/icon-512x512.png',
+  '/images/favicon (1).ico'
 ];
 
 // Additional resources to cache when possible
