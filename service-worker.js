@@ -42,6 +42,18 @@ const SECONDARY_ASSETS = [
   'https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js'
 ];
 
+// Add all HTML pages to ensure they're cached
+const HTML_PAGES = [
+  '/',
+  '/index.html',
+  '/login.html',
+  '/signup.html',
+  '/offline.html'
+];
+
+// Combine all assets for complete caching
+const ALL_ASSETS = [...new Set([...CORE_ASSETS, ...SECONDARY_ASSETS, ...HTML_PAGES])];
+
 // Install event - cache core resources
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -72,7 +84,7 @@ self.addEventListener('activate', (event) => {
         // Cache secondary assets in the background
         caches.open(CACHE_NAME).then(cache => {
           console.log('Caching secondary resources in background...');
-          cache.addAll(SECONDARY_ASSETS).catch(error => {
+          cache.addAll(ALL_ASSETS).catch(error => {
             console.log('Background caching error:', error);
           });
         });
@@ -114,7 +126,7 @@ async function tryAlternativeNetlifyUrls(request) {
   return null;
 }
 
-// Fetch event - network-first for HTML, cache-first for assets
+// Fetch event - improved to better handle offline navigation
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   
@@ -127,8 +139,9 @@ self.addEventListener('fetch', (event) => {
   
   // HTML pages - network first, then cache, then offline page
   if (event.request.mode === 'navigate' || 
-      event.request.headers.get('accept').includes('text/html')) {
+      event.request.headers.get('accept')?.includes('text/html')) {
     event.respondWith(
+      // Try network first
       fetch(event.request)
         .then(response => {
           // Cache the latest version
@@ -139,10 +152,55 @@ self.addEventListener('fetch', (event) => {
           return response;
         })
         .catch(async () => {
-          // Try from cache
+          console.log('Network request failed, trying cache for:', event.request.url);
+          
+          // Try exact match from cache first
           const cachedResponse = await caches.match(event.request);
           if (cachedResponse) {
             return cachedResponse;
+          }
+          
+          // Try normalized URL (for direct navigation)
+          const normalizedUrl = new URL(event.request.url);
+          
+          // Try with trailing slash
+          if (!normalizedUrl.pathname.endsWith('/')) {
+            const withSlashRequest = new Request(`${normalizedUrl.origin}${normalizedUrl.pathname}/${normalizedUrl.search}`);
+            const withSlashResponse = await caches.match(withSlashRequest);
+            if (withSlashResponse) {
+              return withSlashResponse;
+            }
+          }
+          
+          // Try without trailing slash
+          if (normalizedUrl.pathname.endsWith('/') && normalizedUrl.pathname !== '/') {
+            const withoutSlashRequest = new Request(
+              `${normalizedUrl.origin}${normalizedUrl.pathname.slice(0, -1)}${normalizedUrl.search}`
+            );
+            const withoutSlashResponse = await caches.match(withoutSlashRequest);
+            if (withoutSlashResponse) {
+              return withoutSlashResponse;
+            }
+          }
+          
+          // Try with .html extension
+          if (!normalizedUrl.pathname.endsWith('.html') && !normalizedUrl.pathname.endsWith('/')) {
+            const withHtmlRequest = new Request(
+              `${normalizedUrl.origin}${normalizedUrl.pathname}.html${normalizedUrl.search}`
+            );
+            const withHtmlResponse = await caches.match(withHtmlRequest);
+            if (withHtmlResponse) {
+              return withHtmlResponse;
+            }
+          }
+          
+          // Try with /index.html
+          const indexHtmlRequest = new Request(
+            `${normalizedUrl.origin}${normalizedUrl.pathname}${normalizedUrl.pathname.endsWith('/') ? '' : '/'}index.html${normalizedUrl.search}`
+          );
+          const indexHtmlResponse = await caches.match(indexHtmlRequest);
+          if (indexHtmlResponse) {
+            return indexHtmlResponse;
           }
           
           // Try alternative URLs for Netlify
@@ -153,7 +211,16 @@ self.addEventListener('fetch', (event) => {
             }
           }
           
+          // If we're offline and requesting the root, try to serve index.html
+          if (normalizedUrl.pathname === '/' || normalizedUrl.pathname === '') {
+            const indexResponse = await caches.match('/index.html');
+            if (indexResponse) {
+              return indexResponse;
+            }
+          }
+          
           // Fallback to offline page
+          console.log('No cached version found, serving offline page');
           return caches.match(OFFLINE_URL);
         })
     );
@@ -223,7 +290,7 @@ self.addEventListener('sync', (event) => {
   if (event.tag === 'update-cache') {
     event.waitUntil(
       caches.open(CACHE_NAME).then(cache => {
-        return Promise.all([...CORE_ASSETS, ...SECONDARY_ASSETS].map(url => {
+        return Promise.all(ALL_ASSETS.map(url => {
           return fetch(url).then(response => {
             if (response && response.ok) {
               return cache.put(url, response);
