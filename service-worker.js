@@ -1,4 +1,4 @@
-const CACHE_NAME = 'sukuna-pwa-v2';
+const CACHE_NAME = 'sukuna-pwa-v3'; // Incrementing cache version
 const OFFLINE_URL = '/offline.html';
 
 // Resources to cache immediately on install
@@ -36,7 +36,11 @@ const SECONDARY_ASSETS = [
   '/images/x-lg.svg',
   '/images/ki.jpg',
   '/login.html',
-  '/signup.html',
+  '/signup.html'
+];
+
+// External CDN resources that need special handling
+const CDN_RESOURCES = [
   'https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css',
   'https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css',
   'https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js'
@@ -54,13 +58,32 @@ const HTML_PAGES = [
 // Combine all assets for complete caching
 const ALL_ASSETS = [...new Set([...CORE_ASSETS, ...SECONDARY_ASSETS, ...HTML_PAGES])];
 
-// Install event - cache core resources
+// Install event - cache core resources and CDN resources
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => {
         console.log('Caching core resources...');
         return cache.addAll(CORE_ASSETS);
+      })
+      .then((cache) => {
+        console.log('Attempting to cache CDN resources...');
+        // We'll try to cache CDN resources but won't fail installation if they fail
+        return caches.open(CACHE_NAME).then(cache => {
+          Promise.allSettled(
+            CDN_RESOURCES.map(url => 
+              fetch(url, { mode: 'no-cors' })
+                .then(response => {
+                  if (response) {
+                    return cache.put(url, response);
+                  }
+                })
+                .catch(error => {
+                  console.log('Failed to cache CDN resource:', url, error);
+                })
+            )
+          );
+        });
       })
       .then(() => self.skipWaiting())
   );
@@ -84,7 +107,7 @@ self.addEventListener('activate', (event) => {
         // Cache secondary assets in the background
         caches.open(CACHE_NAME).then(cache => {
           console.log('Caching secondary resources in background...');
-          cache.addAll(ALL_ASSETS).catch(error => {
+          cache.addAll(SECONDARY_ASSETS).catch(error => {
             console.log('Background caching error:', error);
           });
         });
@@ -126,20 +149,129 @@ async function tryAlternativeNetlifyUrls(request) {
   return null;
 }
 
-// Fetch event - improved to better handle offline navigation
+// Helper function to create a minimal Swiper fallback
+function createSwiperFallback() {
+  return new Response(`
+    // Swiper fallback for offline use
+    window.Swiper = class Swiper {
+      constructor(selector, options) {
+        console.log('Using offline Swiper fallback');
+        this.selector = selector;
+        this.options = options;
+        
+        // Basic initialization to prevent errors
+        setTimeout(() => {
+          const container = document.querySelector(selector);
+          if (container) {
+            const slides = container.querySelectorAll('.swiper-slide');
+            slides.forEach(slide => {
+              slide.style.display = 'block';
+              slide.style.marginBottom = '20px';
+            });
+          }
+        }, 100);
+      }
+      
+      // Add minimal methods to prevent errors
+      on() { return this; }
+      slideTo() { return this; }
+      update() { return this; }
+    };
+  `, {
+    headers: new Headers({
+      'Content-Type': 'application/javascript'
+    })
+  });
+}
+
+// Helper function to create CSS fallbacks
+function createCssFallback(type) {
+  let css = '';
+  
+  if (type === 'swiper') {
+    css = `
+      /* Minimal Swiper CSS fallback for offline use */
+      .swiper-container { width: 100%; }
+      .swiper-slide { display: block; width: 100%; margin-bottom: 20px; }
+    `;
+  } else if (type === 'vazirmatn') {
+    css = `
+      /* Fallback font styles when Vazirmatn is unavailable */
+      @font-face {
+        font-family: 'Vazirmatn';
+        src: local('Arial');
+        font-weight: normal;
+        font-style: normal;
+      }
+    `;
+  }
+  
+  return new Response(css, {
+    headers: new Headers({
+      'Content-Type': 'text/css'
+    })
+  });
+}
+
+// Fetch event - improved to better handle offline navigation and CDN resources
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   
+  // Handle CDN resources specially
+  if (CDN_RESOURCES.includes(event.request.url)) {
+    event.respondWith(
+      fetch(event.request)
+        .then(response => {
+          // Cache the response for future offline use
+          const responseToCache = response.clone();
+          caches.open(CACHE_NAME).then(cache => {
+            cache.put(event.request, responseToCache);
+          });
+          return response;
+        })
+        .catch(() => {
+          // Check if we have it cached
+          return caches.match(event.request)
+            .then(cachedResponse => {
+              if (cachedResponse) {
+                return cachedResponse;
+              }
+              
+              // Provide fallbacks for specific CDN resources
+              if (event.request.url.includes('swiper-bundle.min.js')) {
+                console.log('Serving Swiper JS fallback');
+                return createSwiperFallback();
+              } else if (event.request.url.includes('swiper-bundle.min.css')) {
+                console.log('Serving Swiper CSS fallback');
+                return createCssFallback('swiper');
+              } else if (event.request.url.includes('Vazirmatn-font-face.css')) {
+                console.log('Serving Vazirmatn CSS fallback');
+                return createCssFallback('vazirmatn');
+              }
+              
+              // Generic fallback for other CDN resources
+              return new Response('/* Offline fallback */', {
+                headers: new Headers({
+                  'Content-Type': event.request.url.endsWith('.css') ? 'text/css' : 'application/javascript'
+                })
+              });
+            });
+        })
+    );
+    return;
+  }
+  
   // Skip non-GET requests and browser extensions
   if (event.request.method !== 'GET' || 
-      url.origin !== self.location.origin && 
-      !url.href.includes('cdn.jsdelivr.net')) {
+      (url.origin !== self.location.origin && 
+       !url.href.includes('cdn.jsdelivr.net'))) {
     return;
   }
   
   // HTML pages - network first, then cache, then offline page
   if (event.request.mode === 'navigate' || 
-      event.request.headers.get('accept')?.includes('text/html')) {
+      (event.request.headers.get('accept') && 
+       event.request.headers.get('accept').includes('text/html'))) {
     event.respondWith(
       // Try network first
       fetch(event.request)
@@ -290,8 +422,9 @@ self.addEventListener('sync', (event) => {
   if (event.tag === 'update-cache') {
     event.waitUntil(
       caches.open(CACHE_NAME).then(cache => {
-        return Promise.all(ALL_ASSETS.map(url => {
-          return fetch(url).then(response => {
+        return Promise.all([...ALL_ASSETS, ...CDN_RESOURCES].map(url => {
+          const fetchOptions = url.includes('cdn.jsdelivr.net') ? { mode: 'no-cors' } : {};
+          return fetch(url, fetchOptions).then(response => {
             if (response && response.ok) {
               return cache.put(url, response);
             }
