@@ -41,7 +41,6 @@ const SECONDARY_ASSETS = [
   'https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css',
   'https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css',
   'https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js',
-  'https://cdn.jsdelivr.net/npm/swiper@11.2.8/+esm'
 ];
 
 // Install event - cache core resources
