@@ -1,4 +1,4 @@
-const CACHE_NAME = 'sukuna-pwa-v3'; // Incrementing cache version
+const CACHE_NAME = 'sukuna-pwa-v5'; // Incrementing cache version
 const OFFLINE_URL = '/offline.html';
 
 // Resources to cache immediately on install
