@@ -1,4 +1,4 @@
-const CACHE_NAME = 'sukuna-pwa-v3';
+const CACHE_NAME = 'sukuna-pwa-v4';
 const OFFLINE_URL = '/offline.html';
 
 // Resources to cache immediately on install
@@ -147,16 +147,30 @@ self.addEventListener('fetch', (event) => {
           }
           
           // Try alternative URLs for Netlify
-          if (isNetlifyRedirect(url)) {
-            const netlifyResponse = await tryAlternativeNetlifyUrls(event.request);
-            if (netlifyResponse) {
-              return netlifyResponse;
-            }
+          // Explicitly handle root path '/'
+        if (url.pathname === '/') {
+          const rootResponse = await caches.match('/index.html');
+          if (rootResponse) return rootResponse;
+        }
+        
+        // Try alternative URLs for Netlify
+        if (isNetlifyRedirect(url)) {
+          const netlifyResponse = await tryAlternativeNetlifyUrls(event.request);
+          if (netlifyResponse) {
+            return netlifyResponse;
           }
-          
-          // Fallback to offline page
-          return caches.match(OFFLINE_URL);
-        })
+        }
+        
+        // Try to find a cached page that matches the request
+        const pages = ['/index.html', '/', '/offline.html'];
+        for (const page of pages) {
+          const cachedPage = await caches.match(page);
+          if (cachedPage) return cachedPage;
+        }
+        
+        // Final fallback to offline page
+        return caches.match(OFFLINE_URL);
+      })
     );
     return;
   }
