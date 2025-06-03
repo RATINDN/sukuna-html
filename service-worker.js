@@ -1,22 +1,16 @@
-const CACHE_NAME = 'sukuna-pwa-v3';
+const CACHE_NAME = 'sukuna-pwa-v4';
 const OFFLINE_URL = '/offline.html';
 
-// Resources to cache immediately on install
+// Only cache essential local assets
 const CORE_ASSETS = [
   './', 
   '/index.html',
-  '/manifest.json',
   '/offline.html',
+  '/manifest.json',
   '/css/style.css',
   '/css/loginstyle.css',
   '/css/signup.css',
   '/js/cloudflare-jsd.js',
-  '/images/icon-192x192.png',
-  '/images/icon-512x512.png'
-];
-
-// Additional resources to cache when possible
-const SECONDARY_ASSETS = [
   '/js/server.js',
   '/js/js.js',
   '/js/backbutton.js',
@@ -24,6 +18,8 @@ const SECONDARY_ASSETS = [
   '/js/signup.js',
   '/js/login signup.js',
   '/install.js',
+  '/images/icon-192x192.png',
+  '/images/icon-512x512.png',
   '/images/car-1.webp',
   '/images/1.webp',
   '/images/2.webp',
@@ -36,10 +32,7 @@ const SECONDARY_ASSETS = [
   '/images/x-lg.svg',
   '/images/ki.jpg',
   '/login.html',
-  '/signup.html',
-  'https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css',
-  'https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css',
-  'https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js'
+  '/signup.html'
 ];
 
 // Install event - cache core resources
@@ -114,18 +107,35 @@ async function tryAlternativeNetlifyUrls(request) {
   return null;
 }
 
-// Fetch event - network-first for HTML, cache-first for assets
+// Fetch event - handle CDN requests separately
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   
-  // Skip non-GET requests and browser extensions
-  if (event.request.method !== 'GET' || 
-      url.origin !== self.location.origin && 
-      !url.href.includes('cdn.jsdelivr.net')) {
+  // Skip non-GET requests
+  if (event.request.method !== 'GET') {
     return;
   }
   
-  // HTML pages - network first, then cache, then offline page
+  // Handle CDN requests
+  if (url.host.includes('cdn.jsdelivr.net')) {
+    event.respondWith(
+      fetch(event.request).catch(() => {
+        // Return empty CSS for CDN stylesheets
+        if (url.pathname.endsWith('.css')) {
+          return new Response('', { headers: { 'Content-Type': 'text/css' } });
+        }
+        // Return empty JS for CDN scripts
+        if (url.pathname.endsWith('.js')) {
+          return new Response('', { headers: { 'Content-Type': 'application/javascript' } });
+        }
+        // For other CDN resources, return empty response
+        return new Response('', { status: 200 });
+      })
+    );
+    return;
+  }
+  
+  // Handle navigation requests
   if (event.request.mode === 'navigate' || 
       event.request.headers.get('accept').includes('text/html')) {
     event.respondWith(
@@ -160,61 +170,26 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   
-  // For assets - cache first, then network
+  // Handle local assets - cache first with network fallback
   event.respondWith(
-    caches.match(event.request)
-      .then(cachedResponse => {
-        if (cachedResponse) {
-          // Return cached response and update cache in background
-          // This implements a stale-while-revalidate strategy
-          const updateCache = fetch(event.request)
-            .then(networkResponse => {
-              if (networkResponse && networkResponse.ok) {
-                caches.open(CACHE_NAME).then(cache => {
-                  cache.put(event.request, networkResponse.clone());
-                });
-              }
-            })
-            .catch(() => {
-              // Network request failed, but we already have cached version
-            });
-            
-          // Don't wait for the cache update
-          event.waitUntil(updateCache);
-          return cachedResponse;
+    (async () => {
+      const cachedResponse = await caches.match(event.request);
+      if (cachedResponse) return cachedResponse;
+      
+      try {
+        const networkResponse = await fetch(event.request);
+        if (networkResponse.ok) {
+          const cache = await caches.open(CACHE_NAME);
+          cache.put(event.request, networkResponse.clone());
         }
-        
-        // Not in cache, get from network
-        return fetch(event.request)
-          .then(response => {
-            if (!response || response.status !== 200 || response.type !== 'basic') {
-              return response;
-            }
-            
-            // Cache the response for future
-            const responseToCache = response.clone();
-            caches.open(CACHE_NAME).then(cache => {
-              cache.put(event.request, responseToCache);
-            });
-            
-            return response;
-          })
-          .catch(() => {
-            // For images, return a placeholder if available
-            if (event.request.url.match(/\.(jpg|jpeg|png|gif|webp|svg)$/)) {
-              return caches.match('/images/placeholder.svg');
-            }
-            
-            // For other resources
-            return new Response('Offline content not available', {
-              status: 503,
-              statusText: 'Service Unavailable',
-              headers: new Headers({
-                'Content-Type': 'text/plain'
-              })
-            });
-          });
-      })
+        return networkResponse;
+      } catch (error) {
+        return new Response('Offline content not available', {
+          status: 503,
+          headers: { 'Content-Type': 'text/plain' }
+        });
+      }
+    })()
   );
 });
 
