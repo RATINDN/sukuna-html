@@ -49,7 +49,8 @@ self.addEventListener('install', (event) => {
     caches.open(CACHE_NAME)
       .then((cache) => {
         console.log('Caching core resources...');
-        return cache.addAll(CORE_ASSETS);
+        // Add all core assets and fallback to offline page
+        return cache.addAll([...CORE_ASSETS, OFFLINE_URL]);
       })
       .then(() => self.skipWaiting())
   );
@@ -115,7 +116,7 @@ async function tryAlternativeNetlifyUrls(request) {
   return null;
 }
 
-// Fetch event - network-first for HTML, cache-first for assets
+// Fetch event - improved offline handling
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   
@@ -126,110 +127,91 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   
-  // HTML pages - network first, then cache, then offline page
+  // HTML pages - cache first with network fallback
   if (event.request.mode === 'navigate' || 
       event.request.headers.get('accept').includes('text/html')) {
     event.respondWith(
-      fetch(event.request)
-        .then(response => {
-          // Cache the latest version
-          const clonedResponse = response.clone();
-          caches.open(CACHE_NAME).then(cache => {
-            cache.put(event.request, clonedResponse);
-          });
-          return response;
-        })
-        .catch(async () => {
-          // Try from cache
+      (async () => {
+        try {
+          // Try to fetch from network first
+          const networkResponse = await fetch(event.request);
+          // Update cache with fresh response
+          const cache = await caches.open(CACHE_NAME);
+          await cache.put(event.request, networkResponse.clone());
+          return networkResponse;
+        } catch (error) {
+          // Network failed - try cache
           const cachedResponse = await caches.match(event.request);
-          if (cachedResponse) {
-            return cachedResponse;
+          if (cachedResponse) return cachedResponse;
+          
+          // Handle root path specifically
+          if (url.pathname === '/') {
+            const rootResponse = await caches.match('/index.html');
+            if (rootResponse) return rootResponse;
           }
           
           // Try alternative URLs for Netlify
-          // Explicitly handle root path '/'
-        if (url.pathname === '/') {
-          const rootResponse = await caches.match('/index.html');
-          if (rootResponse) return rootResponse;
-        }
-        
-        // Try alternative URLs for Netlify
-        if (isNetlifyRedirect(url)) {
-          const netlifyResponse = await tryAlternativeNetlifyUrls(event.request);
-          if (netlifyResponse) {
-            return netlifyResponse;
+          if (isNetlifyRedirect(url)) {
+            const netlifyResponse = await tryAlternativeNetlifyUrls(event.request);
+            if (netlifyResponse) return netlifyResponse;
           }
+          
+          // Fallback to offline page for all navigation failures
+          return caches.match(OFFLINE_URL);
         }
-        
-        // Try to find a cached page that matches the request
-        const pages = ['/index.html', '/', '/offline.html'];
-        for (const page of pages) {
-          const cachedPage = await caches.match(page);
-          if (cachedPage) return cachedPage;
-        }
-        
-        // Final fallback to offline page
-        return caches.match(OFFLINE_URL);
-      })
+      })()
     );
     return;
   }
   
   // For assets - cache first, then network
   event.respondWith(
-    caches.match(event.request)
-      .then(cachedResponse => {
-        if (cachedResponse) {
-          // Return cached response and update cache in background
-          // This implements a stale-while-revalidate strategy
-          const updateCache = fetch(event.request)
-            .then(networkResponse => {
+    (async () => {
+      const cachedResponse = await caches.match(event.request);
+      if (cachedResponse) {
+        // Update cache in background
+        event.waitUntil(
+          (async () => {
+            try {
+              const networkResponse = await fetch(event.request);
               if (networkResponse && networkResponse.ok) {
-                caches.open(CACHE_NAME).then(cache => {
-                  cache.put(event.request, networkResponse.clone());
-                });
+                const cache = await caches.open(CACHE_NAME);
+                await cache.put(event.request, networkResponse.clone());
               }
-            })
-            .catch(() => {
-              // Network request failed, but we already have cached version
-            });
-            
-          // Don't wait for the cache update
-          event.waitUntil(updateCache);
-          return cachedResponse;
+            } catch (error) {
+              // Ignore network errors for background update
+            }
+          })()
+        );
+        return cachedResponse;
+      }
+      
+      // Not in cache, try network
+      try {
+        const networkResponse = await fetch(event.request);
+        if (networkResponse && networkResponse.ok) {
+          // Cache the response for future
+          const cache = await caches.open(CACHE_NAME);
+          await cache.put(event.request, networkResponse.clone());
+        }
+        return networkResponse;
+      } catch (error) {
+        // For images, return a placeholder if available
+        if (event.request.url.match(/\.(jpg|jpeg|png|gif|webp|svg)$/)) {
+          const placeholder = await caches.match('/images/placeholder.svg');
+          if (placeholder) return placeholder;
         }
         
-        // Not in cache, get from network
-        return fetch(event.request)
-          .then(response => {
-            if (!response || response.status !== 200 || response.type !== 'basic') {
-              return response;
-            }
-            
-            // Cache the response for future
-            const responseToCache = response.clone();
-            caches.open(CACHE_NAME).then(cache => {
-              cache.put(event.request, responseToCache);
-            });
-            
-            return response;
+        // For other resources, return an error response
+        return new Response('Offline content not available', {
+          status: 503,
+          statusText: 'Service Unavailable',
+          headers: new Headers({
+            'Content-Type': 'text/plain'
           })
-          .catch(() => {
-            // For images, return a placeholder if available
-            if (event.request.url.match(/\.(jpg|jpeg|png|gif|webp|svg)$/)) {
-              return caches.match('/images/placeholder.svg');
-            }
-            
-            // For other resources
-            return new Response('Offline content not available', {
-              status: 503,
-              statusText: 'Service Unavailable',
-              headers: new Headers({
-                'Content-Type': 'text/plain'
-              })
-            });
-          });
-      })
+        });
+      }
+    })()
   );
 });
 
