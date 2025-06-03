@@ -50,8 +50,6 @@ const CDN_RESOURCES = [
 const HTML_PAGES = [
   '/',
   '/index.html',
-  '/login.html',
-  '/signup.html',
   '/offline.html'
 ];
 
